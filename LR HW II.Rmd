@@ -1,0 +1,135 @@
+---
+title: "LR HW II"
+author: "Andrew Lewis"
+date: "2024-09-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load required packages
+library(readr)
+library(tidyverse)
+# library(DataExplorer)
+library(mgcv)
+library(vcdExtra)
+```
+
+```{r}
+# Loading in given data
+insurance_t_bin <- read_csv("insurance_t_bin.csv")
+```
+
+```{r}
+# Creating missing columns for all variables with missing values
+insurance_t_bin <- insurance_t_bin %>% mutate(AGE_M = ifelse(INCOME_BIN == "00 Miss", 1, 0)) %>% 
+  mutate(INCOME_M = ifelse(INCOME_BIN == "00 Miss", 1, 0)) %>% 
+  mutate(LORES_M = ifelse(LORES_BIN == "00 Miss", 1, 0)) %>% 
+  mutate(HMVAL_M = ifelse(HMVAL_BIN == "00 Miss", 1, 0)) %>%
+  mutate(HMOWN_M = ifelse(is.na(HMOWN), 1, 0)) %>%
+  mutate(PHONE_M = ifelse(PHONE_BIN == "00 Miss", 1, 0)) %>%
+  mutate(POS_M = ifelse(POS_BIN == "00 Miss", 1, 0)) %>%
+  mutate(POSAMT_M = ifelse(POSAMT_BIN == "00 Miss", 1, 0)) %>%
+  mutate(INV_M = ifelse(is.na(INV), 1, 0)) %>%
+  mutate(INVBAL_M = ifelse(INVBAL_BIN == "00 Miss", 1, 0)) %>%
+  mutate(CC_M = ifelse(is.na(CC), 1, 0)) %>%
+  mutate(CCBAL_M = ifelse(CCBAL_BIN == "00 Miss", 1, 0)) %>%
+  mutate(CCPURC_M = ifelse(is.na(CCPURC), 1, 0)) %>%
+  mutate(ACCTAGE_M = ifelse(ACCTAGE_BIN == "00 Miss", 1, 0)) %>%
+  mutate(CRSCORE_M = ifelse(CRSCORE_BIN == "00 Miss", 1, 0))
+```
+
+```{r}
+# Identifying separation issues
+for (i in seq_along(insurance_t_bin)) {
+  print(colnames(insurance_t_bin)[i])
+  print(table(insurance_t_bin[[i]], insurance_t_bin$INS))
+}
+```
+
+```{r}
+# Collapsing variables with separation concerns
+insurance_t_bin$CASHBK[which(insurance_t_bin$CASHBK > 1)] <- 1
+insurance_t_bin$MMCRED[which(insurance_t_bin$MMCRED > 2)] <- "3+"
+
+table(insurance_t_bin$CASHBK, insurance_t_bin$INS)
+table(insurance_t_bin$MMCRED, insurance_t_bin$INS)
+```
+
+```{r}
+# Convert all columns to factors
+insurance_t_bin <- insurance_t_bin %>%
+  mutate(across(everything(), as.factor)) %>%
+  ## Replace all NA with a "Missing" category which denotes missing values
+  mutate(across(.fns = ~ fct_explicit_na(as.factor(.), na_level = "Missing")
+  )) %>%
+  ## Rename "00 Miss" to "Missing" to reflect categorical uniformity across variables
+  mutate(across(.fns = ~ fct_recode(., Missing = "00 Miss")
+  )) %>%
+  # Reorder factor levels across all columns to send "Missing" to the end
+  mutate(across(where(is.factor), ~ fct_relevel(., "Missing", after = Inf)))
+print(insurance_t_bin)
+```
+
+```{r}
+# Performing backward selection
+full.model <- glm(INS ~ ., data = insurance_t_bin, family = binomial(link = "logit"))
+
+# step(full.model, direction = "backward", k = qchisq(0.0002, 1, lower.tail = FALSE))
+```
+
+```{r}
+back.model <- glm(INS ~ DDA + IRA + INV + CC + DDABAL_BIN + CHECKS_BIN + TELLER_BIN + 
+    SAVBAL_BIN + ATMAMT_BIN + CDBAL_BIN + ILSBAL_BIN + MMBAL_BIN, 
+    data = insurance_t_bin, family = binomial(link = "logit"))
+
+summary(back.model)
+exp(coef(back.model))
+```
+
+```{r}
+# Use LRT for just ONE model comparison. Compares full model to model without any particular variable. Does this for each variable!
+# Watch out for the lower case and captital anova/Anova
+
+## Make sure you say that aliased is "ok". Convert LRT to a table of results
+LRT_results <- car::Anova(back.model, test = 'LR', type = 'III', singular.ok = TRUE) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Variable") %>%
+  rename(p_value = `Pr(>Chisq)`) %>%
+  select(Variable, p_value) %>%
+  arrange(p_value)
+
+LRT_results
+```
+
+```{r}
+# Performing forward selection of interaction variables
+insurance_t_bin_sub <- insurance_t_bin %>% 
+  select(INS,DDA,IRA,INV,CC,DDABAL_BIN,CHECKS_BIN,TELLER_BIN,SAVBAL_BIN,ATMAMT_BIN,CDBAL_BIN,ILSBAL_BIN,MMBAL_BIN)
+low.model <- glm(INS ~ ., data = insurance_t_bin_sub, family = binomial(link = "logit"))
+full.model <- glm(INS ~ .^2, data = insurance_t_bin_sub, family = binomial(link = "logit"))
+
+#for.model <- step(back.model, scope = list(lower = low.model, upper = full.model), 
+#                  direction = "forward", k = qchisq(0.0002, 1, lower.tail = FALSE))
+```
+
+```{r}
+## Pull the model coefficients and report the odds ratio for each variable and sub-category. Format this into a dataframe and rank based on Odds Ratios
+var_odds_ratios <- summary(back.model)$coefficients %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Variable_Category") %>%
+  ## Solve for the odds ratio
+  mutate(OddsRatio = exp(Estimate)) %>%
+  select(Variable_Category, OddsRatio) %>%
+  arrange(desc(OddsRatio))
+
+print(var_odds_ratios)
+```
+
+
+
+
+

@@ -1,0 +1,223 @@
+---
+title: "LR HW III"
+author: "Andrew Lewis"
+date: "2024-09-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load required packages
+library(readr)
+library(tidyverse)
+library(mgcv)
+library(vcdExtra)
+```
+
+```{r}
+# Loading in given data
+insurance_t_bin <- read_csv("insurance_t_bin.csv")
+insurance_v_bin <- read_csv("insurance_v_bin.csv")
+```
+
+```{r}
+# Creating missing columns for all variables with missing values
+insurance_t_bin <- insurance_t_bin %>% mutate(AGE_M = ifelse(INCOME_BIN == "00 Miss", 1, 0)) %>% 
+  mutate(INCOME_M = ifelse(INCOME_BIN == "00 Miss", 1, 0)) %>% 
+  mutate(LORES_M = ifelse(LORES_BIN == "00 Miss", 1, 0)) %>% 
+  mutate(HMVAL_M = ifelse(HMVAL_BIN == "00 Miss", 1, 0)) %>%
+  mutate(HMOWN_M = ifelse(is.na(HMOWN), 1, 0)) %>%
+  mutate(PHONE_M = ifelse(PHONE_BIN == "00 Miss", 1, 0)) %>%
+  mutate(POS_M = ifelse(POS_BIN == "00 Miss", 1, 0)) %>%
+  mutate(POSAMT_M = ifelse(POSAMT_BIN == "00 Miss", 1, 0)) %>%
+  mutate(INV_M = ifelse(is.na(INV), 1, 0)) %>%
+  mutate(INVBAL_M = ifelse(INVBAL_BIN == "00 Miss", 1, 0)) %>%
+  mutate(CC_M = ifelse(is.na(CC), 1, 0)) %>%
+  mutate(CCBAL_M = ifelse(CCBAL_BIN == "00 Miss", 1, 0)) %>%
+  mutate(CCPURC_M = ifelse(is.na(CCPURC), 1, 0)) %>%
+  mutate(ACCTAGE_M = ifelse(ACCTAGE_BIN == "00 Miss", 1, 0)) %>%
+  mutate(CRSCORE_M = ifelse(CRSCORE_BIN == "00 Miss", 1, 0))
+
+insurance_v_bin <- insurance_v_bin %>% mutate(AGE_M = ifelse(INCOME_BIN == "00 Miss", 1, 0)) %>% 
+  mutate(INCOME_M = ifelse(INCOME_BIN == "00 Miss", 1, 0)) %>% 
+  mutate(LORES_M = ifelse(LORES_BIN == "00 Miss", 1, 0)) %>% 
+  mutate(HMVAL_M = ifelse(HMVAL_BIN == "00 Miss", 1, 0)) %>%
+  mutate(HMOWN_M = ifelse(is.na(HMOWN), 1, 0)) %>%
+  mutate(PHONE_M = ifelse(PHONE_BIN == "00 Miss", 1, 0)) %>%
+  mutate(POS_M = ifelse(POS_BIN == "00 Miss", 1, 0)) %>%
+  mutate(POSAMT_M = ifelse(POSAMT_BIN == "00 Miss", 1, 0)) %>%
+  mutate(INV_M = ifelse(is.na(INV), 1, 0)) %>%
+  mutate(INVBAL_M = ifelse(INVBAL_BIN == "00 Miss", 1, 0)) %>%
+  mutate(CC_M = ifelse(is.na(CC), 1, 0)) %>%
+  mutate(CCBAL_M = ifelse(CCBAL_BIN == "00 Miss", 1, 0)) %>%
+  mutate(CCPURC_M = ifelse(is.na(CCPURC), 1, 0)) %>%
+  mutate(ACCTAGE_M = ifelse(ACCTAGE_BIN == "00 Miss", 1, 0)) %>%
+  mutate(CRSCORE_M = ifelse(CRSCORE_BIN == "00 Miss", 1, 0))
+```
+
+```{r}
+# Identifying separation issues for the training set
+for (i in seq_along(insurance_t_bin)) {
+  print(colnames(insurance_t_bin)[i])
+  print(table(insurance_t_bin[[i]], insurance_t_bin$INS))
+}
+```
+
+```{r}
+# Collapsing variables with separation concerns
+insurance_t_bin$CASHBK[which(insurance_t_bin$CASHBK > 1)] <- 1
+insurance_t_bin$MMCRED[which(insurance_t_bin$MMCRED > 2)] <- "3+"
+
+insurance_v_bin$CASHBK[which(insurance_v_bin$CASHBK > 1)] <- 1
+insurance_v_bin$MMCRED[which(insurance_v_bin$MMCRED > 2)] <- "3+"
+
+table(insurance_t_bin$CASHBK, insurance_t_bin$INS)
+table(insurance_t_bin$MMCRED, insurance_t_bin$INS)
+```
+
+```{r, warning=F}
+# Convert all columns to factors
+insurance_t_bin <- insurance_t_bin %>%
+  mutate(across(everything(), as.factor)) %>%
+  ## Replace all NA with a "Missing" category which denotes missing values
+  mutate(across(.fns = ~ fct_explicit_na(as.factor(.), na_level = "Missing"))) %>%
+  ## Rename "00 Miss" to "Missing" to reflect categorical uniformity across variables
+  mutate(across(.fns = ~ fct_recode(., Missing = "00 Miss"))) %>%
+  # Reorder factor levels across all columns to send "Missing" to the end
+  mutate(across(where(is.factor), ~ fct_relevel(., "Missing", after = Inf)))
+
+insurance_v_bin <- insurance_v_bin %>%
+  mutate(across(everything(), as.factor)) %>%
+  ## Replace all NA with a "Missing" category which denotes missing values
+  mutate(across(.fns = ~ fct_explicit_na(as.factor(.), na_level = "Missing"))) %>%
+  ## Rename "00 Miss" to "Missing" to reflect categorical uniformity across variables
+  mutate(across(.fns = ~ fct_recode(., Missing = "00 Miss"))) %>%
+  # Reorder factor levels across all columns to send "Missing" to the end
+  mutate(across(where(is.factor), ~ fct_relevel(., "Missing", after = Inf)))
+```
+
+```{r}
+# Defining our final model
+final.model <- glm(INS ~ DDA + IRA + INV + CC + DDABAL_BIN + CHECKS_BIN + 
+                     TELLER_BIN + SAVBAL_BIN + ATMAMT_BIN + CDBAL_BIN + 
+                     ILSBAL_BIN + MMBAL_BIN, data = insurance_t_bin, 
+                   family = binomial(link = "logit"))
+```
+
+```{r}
+# Calculating the coefficient of discrimination and plotting predicted probabilities
+insurance_t_bin$p_hat <- predict(final.model, type = "response")
+
+p1 <- insurance_t_bin$p_hat[insurance_t_bin$INS == 1]
+p0 <- insurance_t_bin$p_hat[insurance_t_bin$INS == 0]
+coef_discrim <- mean(p1) - mean(p0)
+
+ggplot(insurance_t_bin, aes(p_hat, fill = factor(INS))) +
+  geom_density(alpha = 0.7) +
+  scale_fill_grey() +
+  labs(x = "Predicted Probability",
+       fill = "Outcome",
+       title = paste("Coefficient of Discrimination = ",
+                     round(coef_discrim, 3), sep = ""))
+```
+
+```{r}
+# Create a data frame for plotting
+plot_data <- data.frame(
+  Predicted_Probability = insurance_t_bin$p_hat,
+  Class = factor(insurance_t_bin$INS, labels = c("Did Not Purchase Product (0)", "Purchased Product (1)"))
+)
+
+# Plot the histograms of predicted probabilities for each class
+ggplot(plot_data, aes(x = Predicted_Probability, fill = Class)) +
+  geom_histogram(alpha = 0.5, position = "identity", bins = 30) +
+  labs(title = "Predicted Probabilities of Product Purchase",
+       subtitle = paste("Coefficient of Discrimination:", round(coef_discrim, 3)),
+       x = "Predicted Probability",
+       y = "Count") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Did Not Purchase Product (0)" = "red", "Purchased Product (1)" = "blue"))
+```
+
+```{r}
+# Calculating concordance rate
+library(Hmisc)
+somers2(insurance_t_bin$p_hat, as.numeric(insurance_t_bin$INS) - 1)
+```
+
+```{r}
+# Plotting the ROC curve
+library(ROCit)
+logit_roc <- rocit(insurance_t_bin$p_hat, insurance_t_bin$INS)
+plot(logit_roc)
+```
+
+```{r}
+# Calculating the optimal cutoff point
+plot(logit_roc)$optimal
+```
+
+```{r, fig.width=7, fig.height=3, warning=F}
+# Cleaning up the ROC curve plot
+logit_roc <- rocit(insurance_t_bin$p_hat, as.factor(as.numeric(insurance_t_bin$INS)))
+logit_roc_tbl <- as.tibble(data.frame(
+  FPR=logit_roc$FPR, TPR=logit_roc$TPR)) %>%
+  mutate(FPR_round=round(FPR, 7)) %>%
+  mutate(TPR_round=round(TPR, 7)) %>%
+  mutate(cutoff=if_else((FPR_round==0.2910167) & (TPR_round==0.7590816), 0.7590816, NA))
+
+ggplot(logit_roc_tbl, aes(x = FPR)) +
+  geom_line(aes(y = TPR, color="Empirical ROC curve")) +
+  geom_line(aes(y = FPR, color="Chance line"), linetype="dashed") +
+  geom_point(aes(y = cutoff, color="Optimal cutoff point"), shape=8) +
+  labs(
+    title= "ROC curve",
+    y= "Senstivity (TPR)",
+    x= "1 - Specificity (FPR)",
+    color = ""
+  ) +
+  scale_color_manual(values = c("darkgrey", "#D55E00", "black"))+
+  theme(axis.text=element_text(size=8),
+        axis.title=element_text(size=10),
+        legend.text=element_text(size=8))
+```
+
+```{r}
+# Calculating the KS statistic
+ksplot(logit_roc)$`KS stat`
+```
+
+```{r}
+# Creating a confusion matrix using the optimal cutoff
+insurance_v_bin$p_hat <- predict(final.model, insurance_v_bin, type = "response")
+insurance_v_bin <- insurance_v_bin %>%
+  mutate(INS_hat = ifelse(p_hat > 0.31021, 1, 0))
+
+table(insurance_v_bin$INS_hat, insurance_v_bin$INS)
+```
+
+```{r}
+# Comparing accuracies for each cutoff
+logit_meas <- measureit(insurance_v_bin$p_hat, insurance_v_bin$INS, measure = c("ACC", "FSCR"))
+acc_table <- data.frame(Cutoff = logit_meas$Cutoff, Acc = logit_meas$ACC)
+head(arrange(acc_table, desc(Acc)), n = 10)
+```
+
+```{r}
+# Creating the gains table
+logit_roc_val <- rocit(insurance_v_bin$p_hat, insurance_v_bin$INS)
+logit_lift <- gainstable(logit_roc_val)
+print(logit_lift)
+```
+
+```{r}
+# Plotting lift curves
+plot(logit_lift, type = 1)
+plot(logit_lift, type = 2)
+plot(logit_lift, type = 3)
+```
+
+

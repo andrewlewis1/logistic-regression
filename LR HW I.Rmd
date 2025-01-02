@@ -1,0 +1,221 @@
+---
+title: "Logistic Regression Project"
+author: "Team 18"
+date: "8/27/2024"
+output: html_document
+---
+
+# Logistic Regression Project
+
+## Phase #1
+
+```{r}
+# Load required packages
+library(readr)
+library(tidyverse)
+# library(DataExplorer)
+library(mgcv)
+library(vcdExtra)
+```
+
+### Loading Data
+
+This set represents insurance training data. This is the only dataset to be used for the first Phase.
+
+```{r}
+# Read data
+
+insurance_t <- read_csv("insurance_t.csv")
+head(insurance_t)
+```
+
+### Explore the data
+
+```{r}
+tibble::glimpse(insurance_t)
+```
+
+### Assessing Missing Values
+
+```{r}
+## Pull a dataframe of all missing value counts
+missing_data <- data.frame(
+  col_name=names(colSums(is.na(insurance_t))),
+  missing_count=colSums(is.na(insurance_t)),
+  missing_perc=(colSums(is.na(insurance_t))/dim(insurance_t)[[1]])*100
+  )
+# Convert to tibble
+missing_data <- as.tibble(missing_data)
+## Pull the count and percentage of missing values for all variables that have them
+missing_data <- missing_data %>% 
+  filter(missing_count!=0) %>% 
+  arrange(desc(missing_count))
+missing_data
+```
+
+```{r}
+# Bar plot of % values missing in columns
+
+highest_missing_order = missing_data$col_name
+ggplot(missing_data, aes(
+#  x=col_name, 
+  x=factor(col_name, level = highest_missing_order),
+  y=missing_perc)) + 
+  geom_bar(stat = "identity",fill="#4DD0E1") + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) +
+  xlab('Column') + 
+  ylab('% records missing') + 
+  ggtitle('Missing values by column')
+```
+
+```{r}
+# EDA
+
+# create_report(insurance_t)
+```
+
+Import Reference Sheet for Variable Types
+
+```{r}
+# Load in a csv that has all predictor variables and their corresponding "class" (ordinal, continuous, nominal, binary). This was created manually.
+
+var_info <- read_csv("Logistic_variable_classes.csv")
+```
+
+### Explore Predictor Variables
+
+Binary Target Variable (INS) for whether or not customer bought the insurance product.
+
+```{r}
+# Convert categorical variables to factor based on class determined above
+
+for (var_row in 1:nrow(var_info)) {
+  
+  # Extract the variable name and its class
+  var <- var_info[[var_row, 1]]
+  class <- var_info[[var_row, 2]]
+  
+  # Check if the variable class is one that needs to be factored
+  if (class %in% c("Binary", "Nominal", "Ordinal")) {
+    
+    # Convert the column to factor in the insurance_t dataframe
+    insurance_t[[var]] <- factor(insurance_t[[var]])
+  }
+}
+## Convert the target variable to factor 
+insurance_t$INS <- factor(insurance_t$INS)
+```
+
+Build table of p-values ranked by significance
+
+```{r}
+# Loop through each predictor variable
+for (var_row in 1:nrow(var_info)) {
+    
+    var <- var_info[[var_row, 1]]
+    class <- var_info[[var_row, 2]]
+    
+    if (class == "Continuous") {
+      # Logistic regression with the continuous variable
+      logit.model.var <- glm(INS ~ insurance_t[[var]], data = insurance_t, family = binomial(link = "logit"))
+      var_info$p.value[var_row] <- summary(logit.model.var)$coefficients[, "Pr(>|z|)"][[2]][1]
+    }
+    # Mantel-Haenszel Chi-Square Test if Binary or Ordinal
+    else if (class == "Binary" | class == "Ordinal") {
+      cmhtest_vals <- CMHtest(table(insurance_t$INS, insurance_t[[var]]))
+      var_info$p.value[var_row] <- cmhtest_vals$table[1, ][[3]][1]
+    }
+    
+    # Pearson Chi square test for nominal variables
+    else {
+      var_info$p.value[var_row] <- chisq.test(table(insurance_t$INS, insurance_t[[var]]))[[3]][1]
+    }
+}
+  
+# Create a table of pvalues that have been pulled of only the significant variables
+filtered_var_table <- var_info %>%
+  mutate(p.value = as.numeric(p.value)) %>%
+  filter(p.value <= .0002) %>%
+  arrange(p.value)
+    
+print(filtered_var_table)
+```
+
+### Odds Ratio Table
+
+```{r}
+## Collect all binary predictor variables
+binary_vars <- var_info %>%
+  filter(Class == "Binary") %>%
+  pull(Variable)
+
+## Convert to tibble
+binary_odds_ratios <- as_tibble(binary_vars)
+#binary_odds_ratios$odds_ratio <- NA
+
+## Loop through each variable and pull the odds ratio
+cnt = 1
+for (var in binary_vars) {
+  
+  ## Create binary logistic regression for binary variables
+  logit.model.binary <- glm(INS ~ insurance_t[[var]], data = insurance_t, family = binomial(link = "logit"))
+  
+  ## Calculate odds ratio
+  binary_odds_ratios$odds_ratio[cnt] <- exp(coef(logit.model.binary))[2]
+  cnt <- cnt + 1
+  
+}
+
+## Arrange the odds ratio in descending order
+binary_odds_ratios <- binary_odds_ratios %>%
+  arrange(desc(odds_ratio))
+
+print(binary_odds_ratios)
+```
+
+-   For aspects that reflect a challenging or perhaps even low-income financial environment, these elements such as having taken out a loan (ILS), having insufficient funds (NSF), or even ATM transactions (ATM) correspond with a lesser likelihood of taking out a loan
+
+-   Elements that reflect activities with long-term investing such as having a money market (MM), IRA (IRA), certificate of deposit (CD), or investment account (INV) reflect a greater likelihood to purchase a variable rate annuity product.
+
+-   A customer has a 3.47x greater odds of purchasing a variable rate annuity product if they have an investment account compared to if they do not.
+
+### Assessing Linearity
+
+```{r}
+## Collect all continuous variables
+continuous_vars <- var_info %>%
+  filter(Class == "Continuous") %>%
+  pull(Variable)
+
+## Convert to tibble
+continuous_linearity <- as_tibble(continuous_vars)
+
+## Loop through all continuous variables and test the linearity assumption
+cnt = 1
+for (var in continuous_vars) {
+  
+  subset <- insurance_t[,c("INS", var)]
+  
+  ## Fit a normal logistci regression function for each variable
+  logit.model.contin <- glm(INS ~ ., data = subset, family = binomial(link = "logit"))
+  ## Give an s function for just the continuous variables. This tells the   GAM function to calculate a spline
+  fit.gam <- mgcv::gam(reformulate(paste('s(',var,')'), 'INS'),
+   data = subset, family = binomial(link = 'logit'), method = 'REML')
+  
+  ## Check via hypothesis test if the models are statistically different. 
+  contin_lin_test <- anova(logit.model.contin, fit.gam, test = 'LRT')
+  
+  ## Classify if the variable meets the linearity assumption
+  continuous_linearity$linearity[cnt] <- ifelse(contin_lin_test$`Pr(>Chi)`[2] <= .002, 'No', 'Yes')
+  ## Pull the p-value
+  continuous_linearity$p.val[cnt] <- contin_lin_test$`Pr(>Chi)`[2]
+  cnt <- cnt + 1
+  
+}
+
+## Arrange based oon descending order of p-values
+continuous_linearity <- continuous_linearity  %>%
+  arrange(desc(p.val))
+
+print(continuous_linearity)
+```
